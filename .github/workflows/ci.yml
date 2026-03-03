@@ -1,0 +1,188 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  SCOUT_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+
+jobs:
+  test_and_container:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install deps
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          pytest -q
+
+      - name: Enforce non-root USER in Dockerfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          DOCKERFILE="Dockerfile"
+          test -f "$DOCKERFILE"
+
+          if ! grep -Eq '^[[:space:]]*USER[[:space:]]+' "$DOCKERFILE"; then
+            echo "::error::Dockerfile must include a USER instruction (non-root)."
+            exit 1
+          fi
+
+          if grep -Eqi '^[[:space:]]*USER[[:space:]]+(root|0|0:0)[[:space:]]*$' "$DOCKERFILE"; then
+            echo "::error::Dockerfile USER must not be root/0/0:0."
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Determine publish eligibility
+        id: pub
+        shell: bash
+        run: |
+          set -euo pipefail
+          PUBLISH="false"
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            PUBLISH="true"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if [[ "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]]; then
+              PUBLISH="true"
+            fi
+          fi
+
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: steps.pub.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub (for Scout)
+        if: steps.pub.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push (SBOM + provenance)
+        if: steps.pub.outputs.publish == 'true'
+        id: build_push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and load (no push)
+        if: steps.pub.outputs.publish != 'true'
+        id: build_load
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: local/secure-container-template:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify built image runs as non-root
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ steps.pub.outputs.publish }}" == "true" ]]; then
+            IMAGE="${{ env.SCOUT_IMAGE }}"
+            docker pull "$IMAGE" >/dev/null
+          else
+            IMAGE="local/secure-container-template:ci"
+          fi
+
+          USER_FIELD="$(docker image inspect "$IMAGE" --format '{{ .Config.User }}')"
+          echo "Image: $IMAGE"
+          echo "Image Config.User: '${USER_FIELD}'"
+
+          if [[ -z "$USER_FIELD" ]]; then
+            echo "::error::Image has empty Config.User (defaults to root)."
+            exit 1
+          fi
+          if [[ "$USER_FIELD" =~ ^(root|0|0:0)$ ]]; then
+            echo "::error::Image Config.User resolves to root."
+            exit 1
+          fi
+
+      - name: Docker Scout quickview (report)
+        if: steps.pub.outputs.publish == 'true'
+        uses: docker/scout-action@v1
+        with:
+          command: quickview
+          image: ${{ env.SCOUT_IMAGE }}
+          summary: true
+          write-comment: ${{ github.event_name == 'pull_request' }}
+
+      - name: Docker Scout CVEs (fail on fixable critical/high)
+        if: steps.pub.outputs.publish == 'true'
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: ${{ env.SCOUT_IMAGE }}
+          only-severities: critical,high
+          only-fixed: true
+          exit-code: true
+          summary: true
+          write-comment: ${{ github.event_name == 'pull_request' }}
