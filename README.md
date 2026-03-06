@@ -116,7 +116,7 @@ If repository auto-merge is disabled, the workflow warns and leaves the PR for m
 
 ## Branch Protection
 
-`main` should require the `test_and_container` status check before merge.
+`main` should require the `validate` status check before merge.
 
 Recommended settings for `main`:
 
@@ -124,7 +124,7 @@ Recommended settings for `main`:
 - Require at least 1 approval
 - Require status checks to pass before merging
 - Require branches to be up to date before merging
-- Required check: `test_and_container`
+- Required check: `validate`
 - Require conversation resolution before merging
 - Apply rules to administrators
 
@@ -138,7 +138,7 @@ gh api --method PUT \
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["test_and_container"]
+    "contexts": ["validate"]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {
