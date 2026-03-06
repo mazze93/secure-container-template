@@ -1,0 +1,9 @@
+scanners:
+  - vuln
+vuln-type:
+  - os
+  - library
+severity:
+  - HIGH
+  - CRITICAL
+ignore-unfixed: true

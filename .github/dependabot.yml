@@ -2,9 +2,15 @@ version: 2
 updates:
   - package-ecosystem: "pip"
     directory: "/"
+    labels: ["dependencies", "pip"]
+    commit-message:
+      prefix: "chore(deps)"
     schedule:
       interval: "weekly"
   - package-ecosystem: "github-actions"
     directory: "/"
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "chore(ci)"
     schedule:
       interval: "weekly"
