@@ -12,12 +12,10 @@ concurrency:
 permissions:
   contents: read
   packages: write
-  pull-requests: write
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  SCOUT_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
 
 jobs:
   test_and_container:
@@ -99,39 +97,7 @@ jobs:
 
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
 
-      - name: Log in to GHCR
-        if: steps.pub.outputs.publish == 'true'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to Docker Hub (for Scout)
-        if: steps.pub.outputs.publish == 'true'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push (SBOM + provenance)
-        if: steps.pub.outputs.publish == 'true'
-        id: build_push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          provenance: mode=max
-          sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and load (no push)
-        if: steps.pub.outputs.publish != 'true'
+      - name: Build and load (validation image)
         id: build_load
         uses: docker/build-push-action@v6
         with:
@@ -143,7 +109,6 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Health test
-        if: steps.pub.outputs.publish != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -177,12 +142,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${{ steps.pub.outputs.publish }}" == "true" ]]; then
-            IMAGE="${{ env.SCOUT_IMAGE }}"
-            docker pull "$IMAGE" >/dev/null
-          else
-            IMAGE="local/secure-container-template:ci"
-          fi
+          IMAGE="local/secure-container-template:ci"
 
           USER_FIELD="$(docker image inspect "$IMAGE" --format '{{ .Config.User }}')"
           echo "Image: $IMAGE"
@@ -197,23 +157,36 @@ jobs:
             exit 1
           fi
 
-      - name: Docker Scout quickview (report)
-        if: steps.pub.outputs.publish == 'true'
-        uses: docker/scout-action@v1
+      - name: Trivy scan (fail on fixable critical/high)
+        uses: aquasecurity/trivy-action@0.30.0
         with:
-          command: quickview
-          image: ${{ env.SCOUT_IMAGE }}
-          summary: true
-          write-comment: ${{ github.event_name == 'pull_request' }}
+          image-ref: local/secure-container-template:ci
+          format: table
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
-      - name: Docker Scout CVEs (fail on fixable critical/high)
+      - name: Log in to GHCR
         if: steps.pub.outputs.publish == 'true'
-        uses: docker/scout-action@v1
+        uses: docker/login-action@v3
         with:
-          command: cves
-          image: ${{ env.SCOUT_IMAGE }}
-          only-severities: critical,high
-          only-fixed: true
-          exit-code: true
-          summary: true
-          write-comment: ${{ github.event_name == 'pull_request' }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (SBOM + provenance)
+        if: steps.pub.outputs.publish == 'true'
+        id: build_push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

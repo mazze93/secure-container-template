@@ -5,7 +5,7 @@ A minimal Python container template with a hardened default posture:
 - Non-root container runtime
 - GitHub Actions CI
 - SBOM and provenance on published images
-- Docker Scout reporting and policy enforcement
+- Local vulnerability enforcement with Trivy (no external scanner secrets)
 - SemVer tags and GitHub Releases
 - Dependabot for Python and Actions updates
 
@@ -55,46 +55,22 @@ python -m src.main
 
 The health endpoint is available at `http://127.0.0.1:8000/health`.
 
-## Required GitHub Secrets
-
-The `CI` workflow expects these repository secrets:
-
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
-
-These are used by the Docker Scout stages in [.github/workflows/ci.yml](.github/workflows/ci.yml).
-
-Set them with GitHub CLI:
-
-```bash
-gh secret set DOCKERHUB_USERNAME --repo mazze93/secure-container-template
-gh secret set DOCKERHUB_TOKEN --repo mazze93/secure-container-template
-```
-
-If you want Dependabot PRs to exercise the same Scout gate, add matching Dependabot secrets in the GitHub UI:
-
-- `Settings` -> `Secrets and variables` -> `Dependabot`
-- Create `DOCKERHUB_USERNAME`
-- Create `DOCKERHUB_TOKEN`
-
-After secrets are configured, rerun any failed CI jobs from the Actions tab.
-
 ## CI and Security Gates
 
 The main workflow in [.github/workflows/ci.yml](.github/workflows/ci.yml) enforces:
 
 - Python tests must pass.
 - The `Dockerfile` must declare a non-root `USER`.
+- The container must answer `/health` with `{"status":"ok"}`.
 - The built image must have a non-root `Config.User`.
 - Images published from `main` include SBOM and provenance attestations.
-- Docker Scout `quickview` reports on published images.
-- Docker Scout `cves` fails the workflow when fixable `critical` or `high` vulnerabilities are present.
+- Trivy scans the built image and fails CI for fixable `critical` or `high` vulnerabilities.
 
 This means non-root execution and fixable high-severity vulnerabilities are treated as merge blockers, not advisory output.
 
 ## Branch Protection
 
-`main` should require the `test_and_container` status check before merge. That job contains the Scout enforcement path, so requiring it turns the vulnerability gate into a repository policy.
+`main` should require the `test_and_container` status check before merge. That job contains the non-root, health, and Trivy enforcement path, so requiring it turns security gates into repository policy.
 
 Recommended settings for `main`:
 
