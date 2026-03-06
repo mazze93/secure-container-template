@@ -6,14 +6,15 @@
 
 ![Secure Container Template Social Preview](.github/social-preview.png)
 
-A hardened Python container baseline with CI-backed security gates, signed release artifacts, and practical defaults for production-minded teams.
+A hardened Python container baseline with split validation/publish controls, signed release artifacts, and practical defaults for production-minded teams.
 
 ## At a glance
 - Non-root runtime and health contract checks.
 - Local policy checks with Hadolint + Trivy (no external scanner secrets).
 - SARIF upload to GitHub code scanning for Dockerfile and image findings.
+- Build once in CI, then promote the exact validated image to publish/sign.
 - Keyless cosign signing and verification for published images.
-- Dependabot patch/minor auto-approval and auto-merge policy.
+- Dependabot auto-merge restricted to low-risk indirect Python updates.
 - SBOM + provenance attestations on pushed images.
 
 ## Quick links
@@ -77,22 +78,24 @@ The health endpoint is available at `http://127.0.0.1:8000/health`.
 
 ## CI and Security Gates
 
-The main workflow in [.github/workflows/ci.yml](.github/workflows/ci.yml) enforces:
+The main workflow in [.github/workflows/ci.yml](.github/workflows/ci.yml) is split into `validate` and `publish`:
 
 - Python tests must pass.
 - The `Dockerfile` must declare a non-root `USER`.
-- Hadolint policy checks must pass for `Dockerfile`.
+- Hadolint policy checks run from a digest-pinned image.
 - The built image must have a non-root `Config.User`.
 - The container must answer `/health` with `{"status":"ok"}`.
 - Trivy fails CI on fixable `HIGH`/`CRITICAL` vulnerabilities.
 - Hadolint and Trivy SARIF reports are uploaded to GitHub code scanning.
-- Images published from `main` include SBOM and provenance attestations.
+- `publish` runs only on `push` to `main` or release tags.
+- The exact validated image archive is the one that gets pushed and signed.
+- Published images include SBOM and provenance attestations.
 
 Security policy here is secretless and vendor-neutral for scanning. No Docker Hub credentials or third-party scanner accounts are required.
 
 ## Image Signing
 
-On publish-eligible runs, CI signs the pushed GHCR image digest with keyless cosign and then verifies the signature in the same workflow:
+On `main` and release-tag pushes, `publish` signs the pushed GHCR image digest with keyless cosign and then verifies the signature in the same workflow:
 
 - Signing identity: GitHub Actions OIDC (`token.actions.githubusercontent.com`)
 - Signed artifact: `ghcr.io/<owner>/<repo>@<digest>`
@@ -102,12 +105,12 @@ This creates an auditable chain from source workflow to released image.
 
 ## Dependabot Policy
 
-Dependabot updates are configured in [.github/dependabot.yml](.github/dependabot.yml), and safe updates are automated by [.github/workflows/dependabot-auto-merge.yml](.github/workflows/dependabot-auto-merge.yml):
+Dependabot updates are configured in [.github/dependabot.yml](.github/dependabot.yml), and only low-risk updates are automated by [.github/workflows/dependabot-auto-merge.yml](.github/workflows/dependabot-auto-merge.yml):
 
-- Scope: `pip` and `github-actions`
+- Scope: indirect `pip` dependencies only
 - Auto-approve: semver `patch` and `minor` updates only
 - Auto-merge: enabled after approval and branch protection checks pass
-- Major upgrades remain manual review
+- Direct dependencies, major upgrades, and GitHub Actions updates remain manual review
 
 If repository auto-merge is disabled, the workflow warns and leaves the PR for manual merge.
 

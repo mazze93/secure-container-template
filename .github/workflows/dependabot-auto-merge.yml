@@ -21,7 +21,8 @@ jobs:
 
       - name: Auto-approve patch/minor updates
         if: |
-          (steps.metadata.outputs.package-ecosystem == 'pip' || steps.metadata.outputs.package-ecosystem == 'github-actions') &&
+          steps.metadata.outputs.package-ecosystem == 'pip' &&
+          steps.metadata.outputs.dependency-type == 'indirect' &&
           (steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -32,7 +33,8 @@ jobs:
 
       - name: Enable auto-merge
         if: |
-          (steps.metadata.outputs.package-ecosystem == 'pip' || steps.metadata.outputs.package-ecosystem == 'github-actions') &&
+          steps.metadata.outputs.package-ecosystem == 'pip' &&
+          steps.metadata.outputs.dependency-type == 'indirect' &&
           (steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

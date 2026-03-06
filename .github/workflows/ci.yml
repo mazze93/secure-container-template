@@ -1,28 +1,29 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches: ["main"]
-  pull_request:
+    tags:
+      - "v*.*.*"
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  packages: write
-  security-events: write
-  id-token: write
-
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  LOCAL_IMAGE: local/secure-container-template:ci
+  LOCAL_IMAGE: local/secure-container-template:validated
+  VALIDATED_IMAGE_TAR: /tmp/validated-image.tar
+  HADOLINT_IMAGE: hadolint/hadolint@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e
 
 jobs:
-  test_and_container:
+  validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
       - name: Checkout
@@ -73,56 +74,34 @@ jobs:
         with:
           driver: docker-container
 
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,format=long
-            type=ref,event=branch
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Determine publish eligibility
-        id: pub
-        shell: bash
-        run: |
-          set -euo pipefail
-          PUBLISH="false"
-
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            PUBLISH="true"
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            if [[ "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]]; then
-              PUBLISH="true"
-            fi
-          fi
-
-          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
-
-      - name: Build and load (validation image)
-        id: build_load
+      - name: Build validated image archive
         uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
         with:
           context: .
           file: Dockerfile
-          load: true
           tags: ${{ env.LOCAL_IMAGE }}
+          outputs: type=docker,dest=${{ env.VALIDATED_IMAGE_TAR }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Load validated image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker load -i "${{ env.VALIDATED_IMAGE_TAR }}"
 
       - name: Hadolint policy check
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm -i hadolint/hadolint < Dockerfile
+          docker run --rm -i "${{ env.HADOLINT_IMAGE }}" < Dockerfile
 
       - name: Hadolint SARIF report
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm -i --entrypoint hadolint hadolint/hadolint -f sarif - < Dockerfile > hadolint.sarif || true
+          docker run --rm -i --entrypoint hadolint "${{ env.HADOLINT_IMAGE }}" -f sarif - < Dockerfile > hadolint.sarif || true
           if [[ ! -s hadolint.sarif ]]; then
             echo '{"version":"2.1.0","runs":[]}' > hadolint.sarif
           fi
@@ -137,17 +116,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          IMAGE="${{ env.LOCAL_IMAGE }}"
-
-          USER_FIELD="$(docker image inspect "$IMAGE" --format '{{ .Config.User }}')"
-          echo "Image: $IMAGE"
-          echo "Image Config.User: '${USER_FIELD}'"
+          USER_FIELD="$(docker image inspect "${{ env.LOCAL_IMAGE }}" --format '{{ .Config.User }}')"
 
           if [[ -z "$USER_FIELD" ]]; then
             echo "::error::Image has empty Config.User (defaults to root)."
             exit 1
           fi
+
           if [[ "$USER_FIELD" =~ ^(root|0|0:0)$ ]]; then
             echo "::error::Image Config.User resolves to root."
             exit 1
@@ -157,26 +132,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="${{ env.LOCAL_IMAGE }}"
-          docker run -d --name health-test -p 8000:8000 "$IMAGE"
+          docker run -d --name health-test -p 8000:8000 "${{ env.LOCAL_IMAGE }}"
           trap "docker rm -f health-test" EXIT
           sleep 2
+
           RESPONSE="$(curl -s -w '\n%{http_code}' http://localhost:8000/health)"
           HTTP_CODE="$(echo "$RESPONSE" | tail -n1)"
           BODY="$(echo "$RESPONSE" | head -n-1)"
+
           if [[ "$HTTP_CODE" != "200" ]]; then
             echo "::error::Health endpoint returned HTTP $HTTP_CODE"
             exit 1
           fi
+
           if ! echo "$BODY" | grep -q '"status".*"ok"'; then
             echo "::error::Health endpoint missing 'status: ok' in response: $BODY"
             exit 1
           fi
 
-      - name: Trivy policy check (fail on fixable critical/high)
+      - name: Trivy policy check
         uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # 0.34.2
         with:
-          image-ref: ${{ env.LOCAL_IMAGE }}
+          input: ${{ env.VALIDATED_IMAGE_TAR }}
           trivy-config: .trivy.yaml
           format: table
           exit-code: "1"
@@ -185,7 +162,7 @@ jobs:
         if: always()
         uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # 0.34.2
         with:
-          image-ref: ${{ env.LOCAL_IMAGE }}
+          input: ${{ env.VALIDATED_IMAGE_TAR }}
           trivy-config: .trivy.yaml
           format: sarif
           output: trivy.sarif
@@ -198,51 +175,95 @@ jobs:
         with:
           sarif_file: trivy.sarif
 
+      - name: Upload validated image archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: validated-image
+          path: ${{ env.VALIDATED_IMAGE_TAR }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: validate
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Download validated image archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: validated-image
+          path: /tmp
+
+      - name: Load validated image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker load -i "${{ env.VALIDATED_IMAGE_TAR }}"
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+
       - name: Log in to GHCR
-        if: steps.pub.outputs.publish == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push (SBOM + provenance)
-        if: steps.pub.outputs.publish == 'true'
-        id: build_push
-        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          provenance: mode=max
-          sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Push validated image
+        id: push
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRIMARY_TAG=""
+
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            docker tag "${{ env.LOCAL_IMAGE }}" "$tag"
+            docker push "$tag"
+            if [[ -z "$PRIMARY_TAG" ]]; then
+              PRIMARY_TAG="$tag"
+            fi
+          done <<< "${{ steps.meta.outputs.tags }}"
+
+          DIGEST="$(docker buildx imagetools inspect "$PRIMARY_TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "primary_tag=$PRIMARY_TAG" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
-        if: steps.pub.outputs.publish == 'true'
         uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
         with:
           cosign-release: v2.5.3
 
-      - name: Cosign sign image (keyless)
-        if: steps.pub.outputs.publish == 'true'
+      - name: Cosign sign image
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build_push.outputs.digest }}"
+          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
           cosign sign --yes "$IMAGE_REF"
 
       - name: Cosign verify image signature
-        if: steps.pub.outputs.publish == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build_push.outputs.digest }}"
+          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
           cosign verify \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/ci.yml@refs/heads/.+$" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/.github/workflows/ci.yml@(refs/heads/main|refs/tags/.+)$" \
             "$IMAGE_REF"
