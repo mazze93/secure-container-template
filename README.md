@@ -1,13 +1,25 @@
 # secure-container-template
+![Language](https://img.shields.io/badge/Language-Python-blue)
+![Container](https://img.shields.io/badge/Runtime-Non--Root-critical)
+![CI](https://img.shields.io/badge/CI-GitHub%20Actions-success)
+![Status](https://img.shields.io/badge/Status-Template-brightgreen)
 
-A minimal Python container template with a hardened default posture:
+![Secure Container Template Social Preview](.github/social-preview.png)
 
-- Non-root container runtime
-- GitHub Actions CI
-- SBOM and provenance on published images
-- Docker Scout reporting and policy enforcement
-- SemVer tags and GitHub Releases
-- Dependabot for Python and Actions updates
+A hardened Python container baseline with CI-backed security gates, supply-chain attestations, and practical defaults for production-minded teams.
+
+## At a glance
+- Non-root runtime and health contract checks.
+- SBOM + provenance in release workflow.
+- Docker Scout reporting and policy enforcement.
+
+## Quick links
+- [Repository Layout](#repository-layout)
+- [Local Development](#local-development)
+- [CI and Security Gates](#ci-and-security-gates)
+
+## GitHub social preview
+Upload `.github/social-preview.png` in repository `Settings -> General -> Social preview` to use the branded card on link shares.
 
 ## Repository Layout
 
