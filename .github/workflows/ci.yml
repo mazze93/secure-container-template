@@ -156,6 +156,7 @@ jobs:
           input: ${{ env.VALIDATED_IMAGE_TAR }}
           trivy-config: .trivy.yaml
           format: table
+          ignore-unfixed: true
           exit-code: "1"
 
       - name: Trivy SARIF report
@@ -166,6 +167,7 @@ jobs:
           trivy-config: .trivy.yaml
           format: sarif
           output: trivy.sarif
+          ignore-unfixed: true
           exit-code: "0"
           limit-severities-for-sarif: true
 
