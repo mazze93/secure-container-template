@@ -23,6 +23,8 @@ A hardened Python container baseline with split validation/publish controls, sig
 - [CI and Security Gates](#ci-and-security-gates)
 - [Image Signing](#image-signing)
 - [Dependabot Policy](#dependabot-policy)
+- [Security Model](SECURITY.md)
+- [Operations Guide](OPERATIONS.md)
 - [Release Ritual](#release-ritual)
 
 ## GitHub social preview
