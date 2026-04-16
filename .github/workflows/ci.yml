@@ -68,7 +68,7 @@ jobs:
           fi
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver-options: network=host
 
@@ -117,7 +117,7 @@ jobs:
       - name: Build and push (SBOM + provenance)
         if: steps.pub.outputs.publish == 'true'
         id: build_push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -133,7 +133,7 @@ jobs:
       - name: Build and load (no push)
         if: steps.pub.outputs.publish != 'true'
         id: build_load
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
