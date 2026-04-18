@@ -109,6 +109,25 @@ jobs:
       - name: Upload Hadolint SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@0d579ffd059c29b07949a3cce3983f0780820c98 # v4.32.6
+      - name: Build and push (SBOM + provenance)
+        if: steps.pub.outputs.publish == 'true'
+        id: build_push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and load (no push)
+        if: steps.pub.outputs.publish != 'true'
+        id: build_load
+        uses: docker/build-push-action@v7
         with:
           sarif_file: hadolint.sarif
 
