@@ -70,7 +70,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
         with:
-          driver: docker-container
+          driver-options: network=host
 
       - name: Docker metadata
         id: meta
@@ -122,6 +122,7 @@ jobs:
           context: .
           file: Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
@@ -140,6 +141,36 @@ jobs:
           tags: local/secure-container-template:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Health test
+        if: steps.pub.outputs.publish != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="local/secure-container-template:ci"
+          
+          docker run -d --name health-test -p 8000:8000 "$IMAGE"
+          trap "docker rm -f health-test" EXIT
+          
+          # Wait for container to be ready
+          sleep 2
+          
+          # Test health endpoint
+          RESPONSE="$(curl -s -w '\n%{http_code}' http://localhost:8000/health)"
+          HTTP_CODE="$(echo "$RESPONSE" | tail -n1)"
+          BODY="$(echo "$RESPONSE" | head -n-1)"
+          
+          if [[ "$HTTP_CODE" != "200" ]]; then
+            echo "::error::Health endpoint returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+          
+          if ! echo "$BODY" | grep -q '"status".*"ok"'; then
+            echo "::error::Health endpoint missing 'status: ok' in response: $BODY"
+            exit 1
+          fi
+          
+          echo "✓ Health check passed: $BODY"
 
       - name: Verify built image runs as non-root
         shell: bash
