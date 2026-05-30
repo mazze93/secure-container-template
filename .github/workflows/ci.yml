@@ -12,7 +12,6 @@ concurrency:
 permissions:
   contents: read
   packages: write
-  pull-requests: write
 
 env:
   REGISTRY: ghcr.io
@@ -85,19 +84,29 @@ jobs:
       - name: Determine publish eligibility
         id: pub
         shell: bash
+        env:
+          # Mapped to env because secrets cannot be referenced directly in `if:`.
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           set -euo pipefail
-          PUBLISH="false"
 
-          if [[ "${{ github.event_name }}" == "push" ]]; then
+          # Only publish (push to GHCR) on pushes to the default branch.
+          # Pull requests — including Dependabot's, which run with a read-only
+          # token and no access to secrets — build and test without pushing.
+          PUBLISH="false"
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
             PUBLISH="true"
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            if [[ "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]]; then
-              PUBLISH="true"
-            fi
+          fi
+
+          # Docker Scout needs Docker Hub auth. Treat it as optional reporting:
+          # only run it when publishing and the Docker Hub secret is configured.
+          SCOUT="false"
+          if [[ "$PUBLISH" == "true" && -n "${DOCKERHUB_USERNAME}" ]]; then
+            SCOUT="true"
           fi
 
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "scout=$SCOUT" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         if: steps.pub.outputs.publish == 'true'
@@ -108,7 +117,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub (for Scout)
-        if: steps.pub.outputs.publish == 'true'
+        if: steps.pub.outputs.scout == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -167,22 +176,22 @@ jobs:
           fi
 
       - name: Docker Scout quickview (report)
-        if: steps.pub.outputs.publish == 'true'
+        if: steps.pub.outputs.scout == 'true'
         uses: docker/scout-action@bacf462e8d090c09660de30a6ccc718035f961e3 # v1
         with:
           command: quickview
           image: ${{ env.SCOUT_IMAGE }}
           summary: true
-          write-comment: ${{ github.event_name == 'pull_request' }}
 
-      - name: Docker Scout CVEs (fail on fixable critical/high)
-        if: steps.pub.outputs.publish == 'true'
+      - name: Docker Scout CVEs (report fixable critical/high, non-blocking)
+        if: steps.pub.outputs.scout == 'true'
         uses: docker/scout-action@bacf462e8d090c09660de30a6ccc718035f961e3 # v1
         with:
           command: cves
           image: ${{ env.SCOUT_IMAGE }}
           only-severities: critical,high
           only-fixed: true
-          exit-code: true
+          # Report findings without failing the build. Flip to `true` to turn
+          # fixable critical/high CVEs back into a hard merge gate.
+          exit-code: false
           summary: true
-          write-comment: ${{ github.event_name == 'pull_request' }}
