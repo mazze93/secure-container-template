@@ -80,6 +80,10 @@ jobs:
             type=sha,format=long
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=secure-container-template
+            org.opencontainers.image.description=Minimal, hardened Python container template (non-root, SBOM + provenance, Scout reporting).
+            org.opencontainers.image.licenses=Apache-2.0
 
       - name: Determine publish eligibility
         id: pub
@@ -87,6 +91,7 @@ jobs:
         env:
           # Mapped to env because secrets cannot be referenced directly in `if:`.
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -99,9 +104,9 @@ jobs:
           fi
 
           # Docker Scout needs Docker Hub auth. Treat it as optional reporting:
-          # only run it when publishing and the Docker Hub secret is configured.
+          # only run it when publishing and BOTH Docker Hub secrets are set.
           SCOUT="false"
-          if [[ "$PUBLISH" == "true" && -n "${DOCKERHUB_USERNAME}" ]]; then
+          if [[ "$PUBLISH" == "true" && -n "${DOCKERHUB_USERNAME}" && -n "${DOCKERHUB_TOKEN}" ]]; then
             SCOUT="true"
           fi
 
@@ -115,13 +120,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to Docker Hub (for Scout)
-        if: steps.pub.outputs.scout == 'true'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push (SBOM + provenance)
         if: steps.pub.outputs.publish == 'true'
@@ -175,8 +173,21 @@ jobs:
             exit 1
           fi
 
-      - name: Docker Scout quickview (report)
+      # Docker Hub login + Scout run after the image is already pushed, and are
+      # best-effort: a missing/invalid Docker Hub credential reports a warning
+      # but never fails the publish job.
+      - name: Log in to Docker Hub (for Scout)
+        id: dockerhub_login
         if: steps.pub.outputs.scout == 'true'
+        continue-on-error: true
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker Scout quickview (report)
+        if: steps.pub.outputs.scout == 'true' && steps.dockerhub_login.outcome == 'success'
+        continue-on-error: true
         uses: docker/scout-action@bacf462e8d090c09660de30a6ccc718035f961e3 # v1
         with:
           command: quickview
@@ -184,7 +195,8 @@ jobs:
           summary: true
 
       - name: Docker Scout CVEs (report fixable critical/high, non-blocking)
-        if: steps.pub.outputs.scout == 'true'
+        if: steps.pub.outputs.scout == 'true' && steps.dockerhub_login.outcome == 'success'
+        continue-on-error: true
         uses: docker/scout-action@bacf462e8d090c09660de30a6ccc718035f961e3 # v1
         with:
           command: cves
