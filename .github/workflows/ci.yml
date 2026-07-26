@@ -188,7 +188,7 @@ jobs:
       - name: Docker Scout quickview (report)
         if: steps.pub.outputs.scout == 'true' && steps.dockerhub_login.outcome == 'success'
         continue-on-error: true
-        uses: docker/scout-action@cd72f264beff1cd72735de31148b9d3244a0234a # v1.21.0
+        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b # v1.23.1
         with:
           command: quickview
           image: ${{ env.SCOUT_IMAGE }}
@@ -197,7 +197,7 @@ jobs:
       - name: Docker Scout CVEs (report fixable critical/high, non-blocking)
         if: steps.pub.outputs.scout == 'true' && steps.dockerhub_login.outcome == 'success'
         continue-on-error: true
-        uses: docker/scout-action@cd72f264beff1cd72735de31148b9d3244a0234a # v1.21.0
+        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b # v1.23.1
         with:
           command: cves
           image: ${{ env.SCOUT_IMAGE }}
