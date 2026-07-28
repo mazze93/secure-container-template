@@ -115,7 +115,7 @@ jobs:
 
       - name: Log in to GHCR
         if: steps.pub.outputs.publish == 'true'
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -180,7 +180,7 @@ jobs:
         id: dockerhub_login
         if: steps.pub.outputs.scout == 'true'
         continue-on-error: true
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
