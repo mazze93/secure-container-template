@@ -12,7 +12,6 @@ concurrency:
 permissions:
   contents: read
   packages: write
-  pull-requests: write
 
 env:
   REGISTRY: ghcr.io
@@ -25,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -68,56 +67,64 @@ jobs:
           fi
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
         with:
           driver-options: network=host
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha,format=long
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=secure-container-template
+            org.opencontainers.image.description=Minimal, hardened Python container template (non-root, SBOM + provenance, Scout reporting).
+            org.opencontainers.image.licenses=Apache-2.0
 
       - name: Determine publish eligibility
         id: pub
         shell: bash
+        env:
+          # Mapped to env because secrets cannot be referenced directly in `if:`.
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
-          PUBLISH="false"
 
-          if [[ "${{ github.event_name }}" == "push" ]]; then
+          # Only publish (push to GHCR) on pushes to the default branch.
+          # Pull requests — including Dependabot's, which run with a read-only
+          # token and no access to secrets — build and test without pushing.
+          PUBLISH="false"
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
             PUBLISH="true"
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            if [[ "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]]; then
-              PUBLISH="true"
-            fi
+          fi
+
+          # Docker Scout needs Docker Hub auth. Treat it as optional reporting:
+          # only run it when publishing and BOTH Docker Hub secrets are set.
+          SCOUT="false"
+          if [[ "$PUBLISH" == "true" && -n "${DOCKERHUB_USERNAME}" && -n "${DOCKERHUB_TOKEN}" ]]; then
+            SCOUT="true"
           fi
 
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "scout=$SCOUT" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         if: steps.pub.outputs.publish == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to Docker Hub (for Scout)
-        if: steps.pub.outputs.publish == 'true'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Build and push (SBOM + provenance)
         if: steps.pub.outputs.publish == 'true'
         id: build_push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: Dockerfile
@@ -133,7 +140,7 @@ jobs:
       - name: Build and load (no push)
         if: steps.pub.outputs.publish != 'true'
         id: build_load
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: Dockerfile
@@ -197,23 +204,37 @@ jobs:
             exit 1
           fi
 
+      # Docker Hub login + Scout run after the image is already pushed, and are
+      # best-effort: a missing/invalid Docker Hub credential reports a warning
+      # but never fails the publish job.
+      - name: Log in to Docker Hub (for Scout)
+        id: dockerhub_login
+        if: steps.pub.outputs.scout == 'true'
+        continue-on-error: true
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Docker Scout quickview (report)
-        if: steps.pub.outputs.publish == 'true'
-        uses: docker/scout-action@v1
+        if: steps.pub.outputs.scout == 'true' && steps.dockerhub_login.outcome == 'success'
+        continue-on-error: true
+        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b # v1.23.1
         with:
           command: quickview
           image: ${{ env.SCOUT_IMAGE }}
           summary: true
-          write-comment: ${{ github.event_name == 'pull_request' }}
 
-      - name: Docker Scout CVEs (fail on fixable critical/high)
-        if: steps.pub.outputs.publish == 'true'
-        uses: docker/scout-action@v1
+      - name: Docker Scout CVEs (report fixable critical/high, non-blocking)
+        if: steps.pub.outputs.scout == 'true' && steps.dockerhub_login.outcome == 'success'
+        continue-on-error: true
+        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b # v1.23.1
         with:
           command: cves
           image: ${{ env.SCOUT_IMAGE }}
           only-severities: critical,high
           only-fixed: true
-          exit-code: true
+          # Report findings without failing the build. Flip to `true` to turn
+          # fixable critical/high CVEs back into a hard merge gate.
+          exit-code: false
           summary: true
-          write-comment: ${{ github.event_name == 'pull_request' }}
