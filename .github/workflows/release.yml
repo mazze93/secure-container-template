@@ -11,7 +11,7 @@ permissions:
 
 env:
   REGISTRY: docker.io
-  IMAGE: mazze93/secure-container-base
+  IMAGE: mazze93/secure-container-template
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
