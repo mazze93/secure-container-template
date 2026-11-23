@@ -24,8 +24,10 @@ A minimal Python container template with a hardened default posture:
 ├── CHANGELOG.md
 ├── Dockerfile
 ├── LICENSE
+├── SECURITY.md
 ├── VERSION
 ├── build.sh
+├── pytest.ini
 ├── requirements-dev.txt
 ├── requirements.txt
 └── test.sh

@@ -1,29 +1,37 @@
 # Security Policy
 
 ## Supported Versions
-Security updates are provided for the latest version of this project.
+
+Only the latest release receives security fixes.
+
+| Version | Supported |
+| ------- | --------- |
+| latest  | ✅        |
+| older   | ❌        |
+
+## Scope
+
+This repository is a hardened Python container template. Relevant vulnerabilities include:
+
+- CVEs in Flask or its transitive dependencies
+- Container security issues (e.g. privilege escalation, root execution)
+- Supply chain issues in the CI/CD pipeline (workflow injection, unpinned actions)
+- Secrets exposure in workflow logs or image layers
 
 ## Reporting a Vulnerability
-If you discover a security vulnerability, please report it privately via GitHub Security Advisories.
 
-Do not open public issues for security vulnerabilities.
+Report privately via [GitHub Security Advisories](../../security/advisories/new). Do not open a public issue.
 
-We will acknowledge your report and investigate as quickly as possible.
+Include:
+- A description of the vulnerability and its impact
+- Steps to reproduce or proof-of-concept
+- Affected versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+## Response Timeline
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
-
-## Reporting a Vulnerability
-
-Use this section to tell people how to report a vulnerability.
-
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+| Milestone | Target |
+| --------- | ------ |
+| Acknowledgement | 2 business days |
+| Triage and severity assessment | 5 business days |
+| Fix or mitigation | 30 days for critical/high, 90 days for medium/low |
+| Public disclosure | Coordinated with reporter after fix ships |
